@@ -65,6 +65,38 @@ function logStartupWarnings() {
   });
 }
 
+async function ensureDemoTenant() {
+  const demoMode = String(process.env.DEMO_MODE || "true").toLowerCase() === "true";
+  const demoKey = String(process.env.DEMO_TENANT_API_KEY || "").trim();
+
+  if (!demoMode || !demoKey) {
+    return;
+  }
+
+  const existingTenant = await getTenantByApiKey(demoKey);
+  if (existingTenant) {
+    console.log(`Demo tenant verified in Redis: ${existingTenant.tenantId}`);
+    return;
+  }
+
+  const tenant = {
+    apiKey: demoKey,
+    tenantId: "tenant_demo",
+    name: "demo",
+    createdAt: Date.now(),
+    requestsToday: 0,
+    totalTokens: 0,
+    totalCost: 0,
+    lastReset: Date.now(),
+    maxRequestsPerDay: 1000,
+    maxTokensPerDay: 1_000_000,
+    maxCostPerDay: 5
+  };
+
+  await redisClient.set(`tenant:${demoKey}`, JSON.stringify(tenant));
+  console.log(`Demo tenant auto-seeded from DEMO_TENANT_API_KEY: ${tenant.tenantId}`);
+}
+
 async function rateLimit(req, res, next) {
   try {
     await connectRedis();
@@ -353,6 +385,7 @@ if (require.main === module) {
   logStartupWarnings();
 
   Promise.all([prewarmIntentEmbeddings(), connectRedis()])
+    .then(() => ensureDemoTenant())
     .then(() => {
       const app = createApp();
       app.listen(config.port, () => {
