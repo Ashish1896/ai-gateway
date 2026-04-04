@@ -12,6 +12,8 @@ async function callAnthropic(prompt, model = config.models.reasoning){
         throw new Error("ANTHROPIC_API_KEY is not configured");
     }
     const start = Date.now();
+
+    try{
     const response = await axios.post(
         ANTHROPIC_URL,
         {
@@ -29,15 +31,25 @@ async function callAnthropic(prompt, model = config.models.reasoning){
         }
     );
     const output =
-        response?.data?.content[0]?.text ||
+        response?.data?.content?.[0]?.text ||
         "No response";
     return {
-        ok: true,
+        ok: true, 
         output,
         model,
-        cost: 0,
+        cost: 0, //TODO: implement Anthropic pricing
         latency: Date.now() - start,
         usage: toUsage(response.data?.usage)
+    };
+    } catch(error) {
+        return {
+            ok: false,
+            error: error.message,
+            model,
+            cost: 0,
+            latency: Date.now() - start,
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+        };
     }
 }
 module.exports = callAnthropic;
