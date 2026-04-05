@@ -178,6 +178,7 @@ function createApp(overrides = {}) {
   const authMiddleware = overrides.authenticateRequest || authenticateRequest;
   const quotaMiddleware = overrides.enforceTenantQuota || enforceTenantQuota;
   const adminAuthMiddleware = overrides.authenticateAdmin || authenticateAdmin;
+  const embed = overrides.embedText || embedText;
   const app = express();
   const publicDir = path.join(__dirname, "..", "public");
   app.use(express.json({ limit: "1mb" }));
@@ -276,7 +277,7 @@ function createApp(overrides = {}) {
 
     let queryVec = null;
     try {
-      queryVec = await embedText(message);
+      queryVec = await embed(message);
     } catch {
       // embedding unavailable, skip semantic cache and use LLM intent
     }
