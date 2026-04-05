@@ -5,7 +5,8 @@ const config = require("./config");
 const {
   detectIntentEmbedding,
   classifyIntentWithLLM,
-  prewarmIntentEmbeddings
+  prewarmIntentEmbeddings,
+  embedText
 } = require("./embeddingRouter");
 const routeIntent = require("./router");
 const { callCheapModel, callReasoningModel } = require("./modelCaller");
@@ -274,23 +275,26 @@ function createApp(overrides = {}) {
     }
 
     let queryVec = null;
-    const semResult = await semanticLookup(message);
-    if (semResult) {
-      queryVec = semResult.vec;
-      if (semResult.hit) {
-        systemMetrics.recordCacheHit();
-        res.setHeader("x-cache", "HIT-SEMANTIC");
-        return res.json({
-          ...semResult.hit,
-          requestId,
-          cached: true
-        });
-      }
+    try {
+      queryVec = await embedText(message);
+    } catch {
+      // embedding unavailable, skip semantic cache and use LLM intent
+    }
+
+    const semResult = await semanticLookup(message, queryVec);
+    if (semResult && semResult.hit) {
+      systemMetrics.recordCacheHit();
+      res.setHeader("x-cache", "HIT-SEMANTIC");
+      return res.json({
+        ...semResult.hit,
+        requestId,
+        cached: true
+      });
     }
 
     systemMetrics.recordCacheMiss();
 
-    const intentResult = await detectIntent(message);
+    const intentResult = await detectIntent(message, queryVec);
 
     let intent;
     let intentConfidence;

@@ -1,6 +1,6 @@
 const config = require("./config");
 const { redisClient, connectRedis } = require("./redisClient");
-const { cosineSimilarity, embedText } = require("./embeddingRouter");
+const { cosineSimilarity } = require("./embeddingRouter");
 
 const SIM_THRESHOLD = config.cache.semanticThreshold || 0.92;
 
@@ -48,15 +48,11 @@ async function getSemanticKeys() {
   return keys;
 }
 
-async function semanticLookup(message) {
+async function semanticLookup(message, precomputedVec) {
   if (!config.cache.enabled) return null;
 
-  let vec;
-  try {
-    vec = await embedText(message);
-  } catch {
-    return null;
-  }
+  const vec = precomputedVec || null;
+  if (!vec) return null;
 
   const keys = await getSemanticKeys();
   if (keys.length === 0) return { vec, hit: null };
