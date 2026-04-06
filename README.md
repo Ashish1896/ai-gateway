@@ -356,8 +356,9 @@ exist. No manual `createTenant.js` step is needed for the demo key.
 After the server starts listening, intent embeddings are prewarmed
 in the background (non-blocking). The server accepts requests
 immediately; early requests that arrive before prewarm completes
-will fall back to the LLM intent classifier instead of
-embedding-based detection.
+will block briefly while embeddings load, but still use
+embedding-based detection. The LLM fallback only kicks in when
+embedding confidence is low or embeddings are unavailable.
 
 ### Demo safety
 
