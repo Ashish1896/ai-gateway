@@ -48,7 +48,9 @@ Tenant Authentication  (API key -> tenant object)
       v
 Quota Enforcement      (requests / tokens / cost per day)
       v
-Cache Lookup           (Redis - skip everything below on hit)
+Exact Cache Lookup     (Redis - normalized key match)
+      v
+Semantic Cache Lookup  (cosine similarity against cached embeddings)
       v
 Intent Detection       (embedding similarity -> intent class)
       v
@@ -64,7 +66,7 @@ Confidence Escalation  (upgrade cheap -> reasoning if weak)
       v
 Usage + Cost Logging   (per-request + per-tenant accounting)
       v
-Cache Write            (store for future identical requests)
+Cache Write            (exact + semantic for future lookups)
       v
 Response               (intent | route | model | latency | cost)
 ```
@@ -135,6 +137,16 @@ Per-tenant API keys with cryptographically secure generation.
 Daily quotas on requests, tokens, and cost. Daily reset is lazy:
 counters reset on the next tenant read after 24 hours, without a
 cron job.
+
+**Two-layer response cache**
+Exact cache checks first using a normalized key derived from the
+input message. On a miss, the system falls back to semantic cache:
+it computes an embedding for the query and compares it against
+stored embeddings using cosine similarity. If the best match
+exceeds `CACHE_SEMANTIC_THRESHOLD` (default `0.92`), the cached
+response is returned without calling a provider. Both layers use
+the same TTL and are stored in Redis under separate key prefixes
+(`ask:*` for exact, `semcache:*` for semantic).
 
 **Redis with interface-compatible fallback**
 When Redis is unavailable, the app falls back to an in-memory
@@ -335,17 +347,17 @@ the port in your Koyeb service settings.
 6. Set the health check path to `/health`
 7. Deploy
 
-### 3. Seed the demo tenant
+### 3. Demo tenant and startup behavior
 
-Once the service is running, open the Koyeb console shell (or run locally
-against the same Redis) and run:
+When `DEMO_MODE=true` and `DEMO_TENANT_API_KEY` is set, the server
+auto-seeds a demo tenant into Redis on startup if one doesn't already
+exist. No manual `createTenant.js` step is needed for the demo key.
 
-```bash
-node scripts/createTenant.js "demo"
-```
-
-Use the output key as `DEMO_TENANT_API_KEY` in your Koyeb env vars and
-redeploy.
+After the server starts listening, intent embeddings are prewarmed
+in the background (non-blocking). The server accepts requests
+immediately; early requests that arrive before prewarm completes
+will fall back to the LLM intent classifier instead of
+embedding-based detection.
 
 ### Demo safety
 
