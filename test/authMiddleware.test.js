@@ -38,6 +38,7 @@ test("rejects request with malformed authorization header", async () => {
   await authenticateRequest(req, res, () => { nextCalled = true; });
 
   assert.equal(res.statusCode, 401);
+  assert.equal(res.body.code, "UNAUTHORIZED");
   assert.equal(nextCalled, false);
 });
 
