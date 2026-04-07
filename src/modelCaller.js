@@ -1,6 +1,6 @@
 const axios = require("axios");
 const config = require("./config");
-const callGroq = require("./providers/groq");
+const { callGroq, callGroqStream } = require("./providers/groq");
 const { chooseModelForRoute } = require("./router");
 const { recordSuccess, recordFailure } = require("./metricsStore");
 
@@ -260,4 +260,45 @@ Include:
   }
 }
 
-module.exports = { callCheapModel, callReasoningModel, computeCostUSD, toUsage };
+async function streamCheapModel(prompt, res) {
+  const cheapModel = chooseModelForRoute("cheap_model");
+  try {
+    const { stream, model, startTime } = await callGroqStream(prompt, cheapModel);
+    return { stream, model, startTime };
+  } catch (err) {
+    recordFailure(cheapModel);
+    throw err;
+  }
+}
+
+async function streamReasoningModel(prompt, res) {
+  const reasoningModel = chooseModelForRoute("reasoning_model");
+  const enhancedPrompt = `
+You are an expert system. Provide a deep, structured, step-by-step analysis.
+
+User request:
+${prompt}
+
+Include:
+- Key concepts
+- Step-by-step explanation
+- Best practices
+- Potential pitfalls
+`;
+  try {
+    const { stream, model, startTime } = await callGroqStream(enhancedPrompt, reasoningModel);
+    return { stream, model, startTime };
+  } catch (err) {
+    recordFailure(reasoningModel);
+    throw err;
+  }
+}
+
+module.exports = {
+  callCheapModel,
+  callReasoningModel,
+  streamCheapModel,
+  streamReasoningModel,
+  computeCostUSD,
+  toUsage
+};

@@ -9,7 +9,7 @@ const {
   embedText
 } = require("./embeddingRouter");
 const routeIntent = require("./router");
-const { callCheapModel, callReasoningModel } = require("./modelCaller");
+const { callCheapModel, callReasoningModel, streamCheapModel, streamReasoningModel } = require("./modelCaller");
 const logUsage = require("./costTracker");
 const isLowConfidence = require("./confidenceChecker");
 const { getCacheKey, getCachedValue, setCachedValue, semanticLookup, setSemanticCache, resetCache } = require("./cache");
@@ -173,6 +173,8 @@ function createApp(overrides = {}) {
   const modelCaller = overrides.modelCaller || {};
   const callCheap = modelCaller.callCheapModel || callCheapModel;
   const callReasoning = modelCaller.callReasoningModel || callReasoningModel;
+  const streamCheap = modelCaller.streamCheapModel || streamCheapModel;
+  const streamReasoning = modelCaller.streamReasoningModel || streamReasoningModel;
   const detectIntent = overrides.intentDetector || detectIntentEmbedding;
   const classifyIntent = overrides.intentLlmClassifier || classifyIntentWithLLM;
   const authMiddleware = overrides.authenticateRequest || authenticateRequest;
@@ -320,6 +322,80 @@ function createApp(overrides = {}) {
     const preferredRoute = routeIntent(intent, message);
     const startedAt = Date.now();
     let finalRoute = preferredRoute;
+
+    const wantsStream = (req.headers.accept || "").includes("text/event-stream");
+
+    if (wantsStream) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "x-request-id": requestId,
+        "x-route": preferredRoute,
+        "x-intent": intent,
+        "x-cache": "MISS"
+      });
+
+      const sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      sendEvent("route", {
+        requestId,
+        intent,
+        intentConfidence,
+        intentSource,
+        route: preferredRoute
+      });
+
+      try {
+        const streamFn = preferredRoute === "reasoning_model" ? streamReasoning : streamCheap;
+        const { stream, model, startTime } = await streamFn(message);
+
+        sendEvent("model", { model });
+
+        let buf = "";
+        stream.on("data", (chunk) => {
+          const lines = chunk.toString().split("\n").filter(l => l.trim());
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const raw = line.slice(6);
+            if (raw === "[DONE]") return;
+            try {
+              const parsed = JSON.parse(raw);
+              const token = parsed.choices?.[0]?.delta?.content;
+              if (token) {
+                buf += token;
+                sendEvent("token", { token });
+              }
+            } catch {}
+          }
+        });
+
+        await new Promise((resolve, reject) => {
+          stream.on("end", resolve);
+          stream.on("error", reject);
+        });
+
+        const latency = Date.now() - startTime;
+
+        sendEvent("done", {
+          response: buf,
+          model,
+          route: preferredRoute,
+          latency
+        });
+
+        systemMetrics.recordLatency(Date.now() - startedAt);
+        res.end();
+        return;
+      } catch (err) {
+        sendEvent("error", { error: err.message });
+        res.end();
+        return;
+      }
+    }
+
     let result;
 
     try {
