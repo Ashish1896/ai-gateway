@@ -272,6 +272,13 @@ Set at minimum:
 - `GROQ_API_KEY`
 - `ADMIN_API_KEY`
 
+Optional tuning:
+
+| Variable | Default | Description |
+|---|---|---|
+| `CONFIDENCE_THRESHOLD` | `0.6` | Score below which a cheap-model response is escalated to the reasoning model. Lower = fewer escalations, higher = more aggressive. |
+| `CACHE_SEMANTIC_THRESHOLD` | `0.92` | Minimum cosine similarity for a semantic cache hit. |
+
 Create a demo tenant:
 
 ```bash
