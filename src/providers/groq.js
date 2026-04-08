@@ -46,4 +46,34 @@ async function callGroq(prompt, model = config.models.cheap) {
   };
 }
 
-module.exports = callGroq;
+async function callGroqStream(prompt, model = config.models.cheap) {
+  if (!config.groqApiKey) {
+    throw new Error("GROQ_API_KEY is not configured");
+  }
+
+  const start = Date.now();
+  const response = await axios.post(
+    GROQ_URL,
+    {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      stream: true
+    },
+    {
+      timeout: config.requestTimeoutMs,
+      headers: {
+        Authorization: `Bearer ${config.groqApiKey}`,
+        "Content-Type": "application/json"
+      },
+      responseType: "stream"
+    }
+  );
+
+  return {
+    stream: response.data,
+    model,
+    startTime: start
+  };
+}
+
+module.exports = { callGroq, callGroqStream };
