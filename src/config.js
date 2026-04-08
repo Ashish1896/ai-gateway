@@ -50,6 +50,23 @@ const config = {
     ttlMs: toNumber(process.env.CACHE_TTL_MS, 300_000),
     maxEntries: toNumber(process.env.CACHE_MAX_ENTRIES, 1000),
     semanticThreshold: toNumber(process.env.CACHE_SEMANTIC_THRESHOLD, 0.92)
+  },
+  embedding: {
+    provider: String(process.env.EMBEDDING_PROVIDER || "bge").trim().toLowerCase(),
+    prewarmEnabled: String(process.env.EMBEDDING_PREWARM || "false").toLowerCase() === "true",
+    prewarmPaceMs: toNumber(process.env.EMBEDDING_PREWARM_PACE_MS, 100),
+    queryPrefix: process.env.EMBEDDING_QUERY_PREFIX || "",
+    googleBaseUrl:
+      process.env.EMBEDDING_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/models",
+    googleModelCandidates: (
+      process.env.EMBEDDING_MODEL_CANDIDATES ||
+      process.env.EMBEDDING_MODEL ||
+      "text-embedding-004,gemini-embedding-001"
+    )
+      .split(",")
+      .map(model => model.trim())
+      .filter(Boolean),
+    localModel: process.env.EMBEDDING_LOCAL_MODEL || "Xenova/bge-small-en-v1.5"
   }
 };
 

@@ -125,7 +125,7 @@ function renderHistory() {
   node.innerHTML = items.map(item => `
     <div class="history-item fade-in">
       <strong>${item.prompt}</strong>
-      <span class="status-line mono">${item.route} · ${item.model} · ${formatLatency(item.latency)}</span>
+      <span class="status-line mono">${item.route} Â· ${item.model} Â· ${formatLatency(item.latency)}</span>
     </div>
   `).join("");
 }
@@ -139,7 +139,7 @@ function renderTrace(data) {
     { label: "Route Selection", detail: data.route },
     { label: "Model Selection", detail: `${data.model} via ${inferProvider(data.model)}` },
     { label: "Response Cache", detail: data.cached ? "Cache hit" : "Cache miss" },
-    { label: "Usage Tracking", detail: `${data.usage?.totalTokens || 0} total tokens · ${formatCurrency(data.cost)}` }
+    { label: "Usage Tracking", detail: `${data.usage?.totalTokens || 0} total tokens Â· ${formatCurrency(data.cost)}` }
   ];
 
   const node = $("trace-list");

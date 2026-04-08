@@ -1,6 +1,6 @@
 const config = require("./config");
 const { redisClient, connectRedis } = require("./redisClient");
-const { cosineSimilarity } = require("./embeddingRouter");
+const { cosineSimilarity, getEmbeddingSignature } = require("./embeddingRouter");
 
 const SIM_THRESHOLD = config.cache.semanticThreshold || 0.92;
 
@@ -10,6 +10,14 @@ function normalizeMessage(message) {
 
 function getCacheKey(message) {
   return `ask:${normalizeMessage(message)}`;
+}
+
+function getSemanticNamespace() {
+  return getEmbeddingSignature().replace(/[^\w.-]+/g, "_");
+}
+
+function getSemanticCacheKey(message) {
+  return `semcache:${getSemanticNamespace()}:${normalizeMessage(message)}`;
 }
 
 async function getCachedValue(key) {
@@ -38,10 +46,11 @@ async function setCachedValue(key, value) {
 
 async function getSemanticKeys() {
   await connectRedis();
+  const pattern = `semcache:${getSemanticNamespace()}:*`;
   let cursor = "0";
   const keys = [];
   do {
-    const res = await redisClient.scan(cursor, { MATCH: "semcache:*", COUNT: 100 });
+    const res = await redisClient.scan(cursor, { MATCH: pattern, COUNT: 100 });
     cursor = res.cursor;
     keys.push(...res.keys);
   } while (cursor !== "0");
@@ -65,6 +74,7 @@ async function semanticLookup(message, precomputedVec) {
     if (!raw) continue;
     const entry = JSON.parse(raw);
     if (!entry.vec) continue;
+    if (entry.signature && entry.signature !== getEmbeddingSignature()) continue;
 
     const sim = cosineSimilarity(vec, entry.vec);
     if (sim > bestSim) {
@@ -76,6 +86,9 @@ async function semanticLookup(message, precomputedVec) {
   if (bestSim >= SIM_THRESHOLD && bestKey) {
     const raw = await redisClient.get(bestKey);
     const entry = JSON.parse(raw);
+    if (entry.signature && entry.signature !== getEmbeddingSignature()) {
+      return { vec, hit: null };
+    }
     return { vec, hit: entry.response };
   }
 
@@ -86,9 +99,13 @@ async function setSemanticCache(message, vec, response) {
   if (!config.cache.enabled || !vec) return;
 
   await connectRedis();
-  const key = `semcache:${normalizeMessage(message)}`;
+  const key = getSemanticCacheKey(message);
   const ttl = Math.max(1, Math.floor(config.cache.ttlMs / 1000));
-  await redisClient.set(key, JSON.stringify({ vec, response }), { EX: ttl });
+  await redisClient.set(key, JSON.stringify({
+    signature: getEmbeddingSignature(),
+    vec,
+    response
+  }), { EX: ttl });
 }
 
 async function resetCache() {
@@ -108,6 +125,7 @@ async function resetCache() {
 
 module.exports = {
   getCacheKey,
+  getSemanticCacheKey,
   getCachedValue,
   setCachedValue,
   semanticLookup,

@@ -131,7 +131,9 @@ was asked.
 
 **Intelligent routing**
 Embedding-based intent classification using cosine similarity
-against prewarmed example vectors. Intent classes include:
+against prewarmed example vectors. The default embedding backend
+is a local BGE model (`Xenova/bge-small-en-v1.5`) to avoid hosted
+API rate limits during development and demo deployments. Intent classes include:
 `greeting`, `summarization`, `architecture_review`,
 `code_analysis`, and `simple_question`. When embedding confidence
 is low, the system falls back to an LLM classifier.
@@ -165,7 +167,9 @@ stored embeddings using cosine similarity. If the best match
 exceeds `CACHE_SEMANTIC_THRESHOLD` (default `0.92`), the cached
 response is returned without calling a provider. Both layers use
 the same TTL and are stored in Redis under separate key prefixes
-(`ask:*` for exact, `semcache:*` for semantic).
+(`ask:*` for exact, `semcache:<embedding-signature>:*` for semantic).
+Semantic entries are namespaced by embedding backend/model so that
+switching providers or dimensions does not mix incompatible vectors.
 
 **Redis with interface-compatible fallback**
 When Redis is unavailable, the app falls back to an in-memory
@@ -189,9 +193,10 @@ src/
 |-- providers/
 |   |-- groq.js              # Provider adapter - isolates Groq HTTP details
 |   |-- anthropic.js         # Anthropic Claude adapter
+|   |-- bge.js               # Local BGE embedding adapter via Transformers.js
 |-- server.js                # Orchestration - request pipeline and endpoint wiring
 |-- router.js                # Route decision + health-aware model selection
-|-- embeddingRouter.js       # Intent detection - embeddings + LLM fallback
+|-- embeddingRouter.js       # Intent detection - provider-backed embeddings + LLM fallback
 |-- modelCaller.js           # Model execution - failover logic and reasoning prompt shaping
 |-- confidenceChecker.js     # Post-response quality gate
 |-- metricsStore.js          # Per-model health tracking - running latency mean
@@ -247,6 +252,9 @@ This is a well-architected MVP, not a hardened production SaaS.
 - Groq pricing may be `0` unless pricing config is populated
 - Admin auth is shared-key based, which is not ideal for
   multi-admin teams
+- Local BGE inference improves reliability but increases CPU/RAM use
+  compared with hosted embeddings and may add cold-start latency on
+  small deployments
 - In-memory Redis fallback is process-local and should not be
   treated as equivalent to shared Redis in a horizontally scaled
   deployment
@@ -268,9 +276,11 @@ cp .env.example .env
 ```
 
 Set at minimum:
-- `GOOGLE_API_KEY`
 - `GROQ_API_KEY`
 - `ADMIN_API_KEY`
+
+`GOOGLE_API_KEY` is only required when you want Gemini model fallback
+or when `EMBEDDING_PROVIDER=google`.
 
 Optional tuning:
 
@@ -278,6 +288,11 @@ Optional tuning:
 |---|---|---|
 | `CONFIDENCE_THRESHOLD` | `0.6` | Score below which a cheap-model response is escalated to the reasoning model. Lower = fewer escalations, higher = more aggressive. |
 | `CACHE_SEMANTIC_THRESHOLD` | `0.92` | Minimum cosine similarity for a semantic cache hit. |
+| `EMBEDDING_PROVIDER` | `bge` | Embedding backend: `bge` for local BGE embeddings or `google` for hosted Google embeddings. |
+| `EMBEDDING_LOCAL_MODEL` | `Xenova/bge-small-en-v1.5` | Local BGE model used when `EMBEDDING_PROVIDER=bge`. |
+| `EMBEDDING_QUERY_PREFIX` | `` | Optional text prefix applied before local embeddings. Useful when tuning retrieval-oriented models. |
+| `EMBEDDING_PREWARM` | `false` | Whether to prewarm intent embeddings on startup. Disabled by default to keep startup reliable. |
+| `EMBEDDING_PREWARM_PACE_MS` | `100` | Delay between prewarm embedding calls when prewarm is enabled. |
 
 Create a demo tenant:
 
@@ -294,6 +309,14 @@ npm start
 Open:
 - `http://localhost:3000/ask`
 - `http://localhost:3000/health`
+
+### Embedding provider notes
+
+- `bge` is the default because it avoids hosted embedding API rate
+  limits and works better for OSS/local development
+- `google` keeps the original hosted embedding flow if you prefer it
+- when changing embedding provider or model, clear semantic cache
+  entries so old vectors do not linger unnecessarily
 
 ---
 
@@ -364,6 +387,9 @@ REDIS_URL=rediss://default:xxx@region.upstash.io:6379
 ADMIN_API_KEY=
 DEMO_MODE=true
 DEMO_TENANT_API_KEY=
+EMBEDDING_PROVIDER=bge
+EMBEDDING_LOCAL_MODEL=Xenova/bge-small-en-v1.5
+EMBEDDING_PREWARM=false
 PORT=8000
 ```
 
@@ -379,12 +405,17 @@ When `DEMO_MODE=true` and `DEMO_TENANT_API_KEY` is set, the server
 auto-seeds a demo tenant into Redis on startup if one doesn't already
 exist. No manual `createTenant.js` step is needed for the demo key.
 
-After the server starts listening, intent embeddings are prewarmed
-in the background (non-blocking). The server accepts requests
-immediately; early requests that arrive before prewarm completes
-will block briefly while embeddings load, but still use
-embedding-based detection. The LLM fallback only kicks in when
+After the server starts listening, intent embeddings can be prewarmed
+in the background when `EMBEDDING_PREWARM=true`. Prewarm is disabled
+by default so deployments do not depend on a burst of startup-time
+embedding calls. The server accepts requests immediately; early
+requests that arrive before embeddings are ready will block briefly
+while the embedding index loads. The LLM fallback kicks in when
 embedding confidence is low or embeddings are unavailable.
+
+For small Koyeb instances, the default `bge-small` model is a better
+fit than larger local embedding models, but it still adds CPU and
+memory overhead compared with hosted embeddings.
 
 ### Demo safety
 
@@ -428,7 +459,7 @@ These tests run against a real server instance with an in-memory Redis fallback,
 ## Tech Stack
 
 Node.js | Express | Redis | Groq API | Google Gemini API |
-Google Embedding API | Node.js test runner
+Transformers.js | BGE embeddings | Node.js test runner
 
 ---
 

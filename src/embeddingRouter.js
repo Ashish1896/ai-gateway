@@ -1,20 +1,9 @@
 const axios = require("axios");
 const config = require("./config");
-const callGroq = require("./providers/groq");
+const { callGroq } = require("./providers/groq");
+const { embedWithBge } = require("./providers/bge");
 
-const DEFAULT_MODEL_CANDIDATES = ["text-embedding-004", "gemini-embedding-001"];
-const configuredModels =
-  process.env.EMBEDDING_MODEL_CANDIDATES ||
-  process.env.EMBEDDING_MODEL ||
-  DEFAULT_MODEL_CANDIDATES.join(",");
-const EMBEDDING_MODELS = configuredModels
-  .split(",")
-  .map(m => m.trim())
-  .filter(Boolean);
-const EMBEDDING_BASE_URL =
-  process.env.EMBEDDING_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/models";
 const CONFIDENCE_THRESHOLD = 0.60;
-const PREWARM_PACE_MS = 100;
 const RETRY_DELAYS_MS = [2000, 4000, 6000];
 
 const intentExamples = {
@@ -126,6 +115,15 @@ let activeEmbeddingModel = null;
 let exampleEmbeddingIndex = null;
 let initPromise = null;
 
+function getEmbeddingSignature() {
+  if (config.embedding.provider === "bge") {
+    return `bge:${config.embedding.localModel}`;
+  }
+
+  const model = activeEmbeddingModel || config.embedding.googleModelCandidates[0] || "unknown";
+  return `google:${model}`;
+}
+
 function dotProduct(a, b) {
   let total = 0;
   for (let i = 0; i < a.length; i += 1) {
@@ -169,7 +167,7 @@ async function embedTextWithModel(model, text) {
   }
 
   const response = await axios.post(
-    `${EMBEDDING_BASE_URL}/${model}:embedContent?key=${config.googleApiKey}`,
+    `${config.embedding.googleBaseUrl}/${model}:embedContent?key=${config.googleApiKey}`,
     {
       content: {
         parts: [{ text }]
@@ -212,12 +210,16 @@ async function embedTextWithRetry(model, text) {
 }
 
 async function selectActiveModel() {
+  if (config.embedding.provider === "bge") {
+    return config.embedding.localModel;
+  }
+
   if (activeEmbeddingModel) {
     return activeEmbeddingModel;
   }
 
   const errors = [];
-  for (const model of EMBEDDING_MODELS) {
+  for (const model of config.embedding.googleModelCandidates) {
     try {
       await embedTextWithRetry(model, "embedding router warmup");
       activeEmbeddingModel = model;
@@ -233,15 +235,15 @@ async function selectActiveModel() {
 }
 
 async function buildExampleEmbeddingIndex() {
-  const model = await selectActiveModel();
+  await selectActiveModel();
   const index = {};
 
   for (const intent of ALLOWED_INTENTS) {
     index[intent] = [];
     for (const example of intentExamples[intent]) {
-      const vector = await embedTextWithRetry(model, example);
+      const vector = await embedText(example);
       index[intent].push({ example, vector });
-      await sleep(PREWARM_PACE_MS);
+      await sleep(config.embedding.prewarmPaceMs);
     }
   }
 
@@ -302,9 +304,31 @@ async function classifyIntentWithLLM(message) {
 }
 
 async function detectIntentEmbedding(message, precomputedVec) {
-  await prewarmIntentEmbeddings();
+  try {
+    await prewarmIntentEmbeddings();
+  } catch (error) {
+    return {
+      intent: "simple_question",
+      confidence: 0,
+      uncertain: true,
+      error: error.message
+    };
+  }
 
-  const queryVector = precomputedVec || await embedTextWithModel(activeEmbeddingModel, message);
+  let queryVector = precomputedVec;
+  if (!queryVector) {
+    try {
+      queryVector = await embedText(message);
+    } catch (error) {
+      return {
+        intent: "simple_question",
+        confidence: 0,
+        uncertain: true,
+        error: error.message
+      };
+    }
+  }
+
   let bestIntent = "simple_question";
   let bestScore = -1;
 
@@ -343,6 +367,10 @@ async function detectIntentEmbedding(message, precomputedVec) {
 }
 
 async function embedText(text) {
+  if (config.embedding.provider === "bge") {
+    return embedWithBge(text);
+  }
+
   await selectActiveModel();
   return embedTextWithModel(activeEmbeddingModel, text);
 }
@@ -353,5 +381,6 @@ module.exports = {
   prewarmIntentEmbeddings,
   cosineSimilarity,
   embedText,
-  intentExamples
+  intentExamples,
+  getEmbeddingSignature
 };
